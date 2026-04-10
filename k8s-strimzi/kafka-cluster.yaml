@@ -1,0 +1,325 @@
+---
+# Strimzi Kafka Cluster CRD Configuration
+# Educational Focus: Compare this declarative approach with manual k8s-manual/ deployment
+
+# This single resource replaces multiple manual Kubernetes manifests:
+# - StatefulSet for Kafka brokers
+# - StatefulSet for ZooKeeper ensemble
+# - Services for internal and external access
+# - ConfigMaps for configuration
+# - PersistentVolumeClaims for storage
+
+apiVersion: kafka.strimzi.io/v1beta2
+kind: Kafka
+metadata:
+  name: kafka-playground-cluster
+  namespace: strimzi-kafka
+  labels:
+    app: kafka-playground
+    phase: strimzi-operator
+  annotations:
+    # Educational annotations explaining key differences from manual deployment
+    strimzi.io/educational-note: "Compare this CRD with manual k8s-manual/ manifests"
+spec:
+  # Kafka broker configuration
+  kafka:
+    # Cluster size - same as manual deployment for comparison
+    replicas: 3
+
+    # Kafka version - using same 3.9.0 as manual deployment
+    version: 3.9.0
+
+    # Listeners configuration - Strimzi simplifies the complex listener setup
+    # Compare with KAFKA_CFG_LISTENERS and KAFKA_CFG_ADVERTISED_LISTENERS in manual setup
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+      - name: tls
+        port: 9093
+        type: internal
+        tls: true
+        # Optional: Enable mutual TLS authentication
+        authentication:
+          type: tls
+
+    # Kafka broker configuration - declarative vs environment variables
+    config:
+      # Replication and fault tolerance (same as manual)
+      default.replication.factor: 2
+      min.insync.replicas: 1
+
+      # Topic configuration (same as manual)
+      num.partitions: 3
+      auto.create.topics.enable: true
+
+      # Retention policies (same as manual)
+      log.retention.hours: 168  # 7 days
+      log.retention.bytes: 1073741824  # 1GB per partition
+      log.segment.bytes: 536870912  # 512MB segments
+      log.cleanup.policy: delete
+
+      # Performance settings (same as manual)
+      replica.lag.time.max.ms: 10000
+      replica.socket.timeout.ms: 30000
+
+      # Compression (same as manual)
+      compression.type: producer
+
+      # JMX metrics - Strimzi enables this automatically
+      # No need for manual JMX_PORT environment variable
+
+    # Storage configuration - notice the simplified syntax vs manual PVCs
+    storage:
+      type: persistent-claim
+      size: 10Gi
+      # Strimzi automatically creates PVCs with proper naming and labels
+      # Compare with volumeClaimTemplates in manual StatefulSet
+
+    # Resource requirements (same as manual for comparison)
+    resources:
+      requests:
+        memory: 1Gi
+        cpu: 500m
+      limits:
+        memory: 2Gi
+        cpu: 1000m
+
+    # JVM configuration - Strimzi provides optimized defaults
+    jvmOptions:
+      -Xms: 1024m
+      -Xmx: 1024m
+
+    # Monitoring integration - built-in Prometheus metrics
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: kafka-metrics-config
+          key: kafka-metrics-config.yml
+
+    # Logging configuration - structured logging
+    logging:
+      type: inline
+      loggers:
+        kafka.root.logger.level: INFO
+        # Enable more detailed logging for educational purposes
+        kafka.controller.logger.level: DEBUG
+        kafka.coordinator.group.logger.level: INFO
+
+  # ZooKeeper configuration - compare with manual zookeeper.yaml
+  zookeeper:
+    # Ensemble size (same as manual)
+    replicas: 3
+
+    # Storage configuration (simplified vs manual)
+    storage:
+      type: persistent-claim
+      size: 10Gi
+
+    # Resource requirements (same as manual for comparison)
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 250m
+      limits:
+        memory: 1Gi
+        cpu: 500m
+
+    # JVM configuration
+    jvmOptions:
+      -Xms: 512m
+      -Xmx: 512m
+
+    # Monitoring integration
+    metricsConfig:
+      type: jmxPrometheusExporter
+      valueFrom:
+        configMapKeyRef:
+          name: zookeeper-metrics-config
+          key: zookeeper-metrics-config.yml
+
+    # Logging configuration
+    logging:
+      type: inline
+      loggers:
+        zookeeper.root.logger: INFO
+
+  # Entity Operator - handles KafkaTopic and KafkaUser resources
+  # This is a Strimzi addition not present in manual deployment
+  entityOperator:
+    topicOperator:
+      # Automatic topic management
+      reconciliationIntervalSeconds: 90
+      zookeeperSessionTimeoutSeconds: 20
+      # Resource requirements
+      resources:
+        requests:
+          memory: 256Mi
+          cpu: 100m
+        limits:
+          memory: 512Mi
+          cpu: 200m
+
+    userOperator:
+      # Automatic user management
+      reconciliationIntervalSeconds: 120
+      zookeeperSessionTimeoutSeconds: 20
+      # Resource requirements
+      resources:
+        requests:
+          memory: 256Mi
+          cpu: 100m
+        limits:
+          memory: 512Mi
+          cpu: 200m
+
+    # TLS configuration for entity operators
+    tlsSidecar:
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 200m
+          memory: 256Mi
+
+---
+# Metrics Configuration for Kafka - enables detailed JMX metrics export
+# This replaces the manual kafka-exporter.yaml approach
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-metrics-config
+  namespace: strimzi-kafka
+  labels:
+    app: kafka-playground
+    component: metrics
+data:
+  kafka-metrics-config.yml: |
+    # JMX metrics configuration for Kafka brokers
+    # Educational: Compare this with the manual kafka-exporter configuration
+
+    lowercaseOutputName: true
+    lowercaseOutputLabelNames: true
+
+    rules:
+    # Broker metrics
+    - pattern: kafka.server<type=(.+), name=(.+)><>Count
+      name: kafka_server_$1_$2_total
+      type: COUNTER
+
+    - pattern: kafka.server<type=(.+), name=(.+)><>Value
+      name: kafka_server_$1_$2
+      type: GAUGE
+
+    # Network metrics
+    - pattern: kafka.network<type=(.+), name=(.+)><>Value
+      name: kafka_network_$1_$2
+      type: GAUGE
+
+    - pattern: kafka.network<type=(.+), name=(.+)><>Count
+      name: kafka_network_$1_$2_total
+      type: COUNTER
+
+    # Topic metrics
+    - pattern: kafka.server<type=BrokerTopicMetrics, name=(.+), topic=(.+)><>Count
+      name: kafka_server_brokertopicmetrics_$1_total
+      labels:
+        topic: $2
+      type: COUNTER
+
+    - pattern: kafka.server<type=BrokerTopicMetrics, name=(.+)><>Count
+      name: kafka_server_brokertopicmetrics_$1_total
+      type: COUNTER
+
+    # Log metrics
+    - pattern: kafka.log<type=LogFlushStats, name=LogFlushRateAndTimeMs><>Count
+      name: kafka_log_flush_total
+      type: COUNTER
+
+    # Controller metrics
+    - pattern: kafka.controller<type=(.+), name=(.+)><>Value
+      name: kafka_controller_$1_$2
+      type: GAUGE
+
+    # Partition metrics
+    - pattern: kafka.cluster<type=Partition, name=(.+), topic=(.+), partition=(.+)><>Value
+      name: kafka_cluster_partition_$1
+      labels:
+        topic: $2
+        partition: $3
+      type: GAUGE
+
+---
+# Metrics Configuration for ZooKeeper
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zookeeper-metrics-config
+  namespace: strimzi-kafka
+  labels:
+    app: kafka-playground
+    component: metrics
+data:
+  zookeeper-metrics-config.yml: |
+    # JMX metrics configuration for ZooKeeper ensemble
+
+    lowercaseOutputName: true
+    lowercaseOutputLabelNames: true
+
+    rules:
+    # ZooKeeper server metrics
+    - pattern: org.apache.ZooKeeperService<name0=ReplicatedServer_id(\d+), name1=replica.(\d+)><>(\w+)
+      name: zookeeper_$3
+      labels:
+        replicaId: $2
+      type: GAUGE
+
+    - pattern: org.apache.ZooKeeperService<name0=ReplicatedServer_id(\d+)><>(\w+)
+      name: zookeeper_$2
+      type: GAUGE
+
+    # ZooKeeper connection metrics
+    - pattern: org.apache.ZooKeeperService<name0=ReplicatedServer_id(\d+), name1=replica.(\d+), name2=(\w+)><>(\w+)
+      name: zookeeper_$3_$4
+      labels:
+        replicaId: $2
+      type: GAUGE
+
+---
+# ServiceMonitor for Prometheus integration (if using Prometheus Operator)
+# This enables automatic discovery and scraping of Strimzi metrics
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: strimzi-servicemonitor-config
+  namespace: strimzi-kafka
+  labels:
+    app: kafka-playground
+    component: monitoring
+data:
+  kafka-servicemonitor.yaml: |
+    # ServiceMonitor for Kafka cluster metrics (reference configuration)
+    # Apply this if using Prometheus Operator for monitoring
+    apiVersion: monitoring.coreos.com/v1
+    kind: ServiceMonitor
+    metadata:
+      name: kafka-playground-cluster
+      namespace: strimzi-kafka
+      labels:
+        app: kafka-playground
+    spec:
+      selector:
+        matchLabels:
+          strimzi.io/cluster: kafka-playground-cluster
+          strimzi.io/kind: Kafka
+      endpoints:
+      - port: tcp-prometheus
+        path: /metrics
+        interval: 30s
+        honorLabels: true
+      namespaceSelector:
+        matchNames:
+        - strimzi-kafka

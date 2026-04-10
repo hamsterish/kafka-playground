@@ -1,0 +1,139 @@
+{
+  "dashboard": {
+    "id": null,
+    "title": "Kafka Overview",
+    "tags": ["kafka", "monitoring", "overview"],
+    "timezone": "browser",
+    "panels": [
+      {
+        "id": 1,
+        "title": "Cluster Health",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "kafka_brokers",
+            "refId": "A",
+            "legendFormat": "Active Brokers"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {
+              "mode": "thresholds"
+            },
+            "thresholds": {
+              "steps": [
+                {"color": "red", "value": null},
+                {"color": "yellow", "value": 2},
+                {"color": "green", "value": 3}
+              ]
+            }
+          }
+        },
+        "gridPos": {"h": 8, "w": 6, "x": 0, "y": 0}
+      },
+      {
+        "id": 2,
+        "title": "Total Topics",
+        "type": "stat",
+        "targets": [
+          {
+            "expr": "kafka_topic_partitions",
+            "refId": "A",
+            "legendFormat": "Topics"
+          }
+        ],
+        "fieldConfig": {
+          "defaults": {
+            "color": {"mode": "palette-classic"}
+          }
+        },
+        "gridPos": {"h": 8, "w": 6, "x": 6, "y": 0}
+      },
+      {
+        "id": 3,
+        "title": "Messages In/Sec",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(kafka_topic_partition_current_offset[5m])",
+            "refId": "A",
+            "legendFormat": "{{topic}}"
+          }
+        ],
+        "yAxes": [
+          {"label": "Messages/sec", "show": true},
+          {"show": false}
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0}
+      },
+      {
+        "id": 4,
+        "title": "Under Replicated Partitions",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "kafka_topic_partition_under_replicated_partition",
+            "refId": "A",
+            "legendFormat": "URP Count"
+          }
+        ],
+        "alert": {
+          "conditions": [
+            {
+              "evaluator": {"params": [0], "type": "gt"},
+              "operator": {"type": "and"},
+              "query": {"params": ["A", "5m", "now"]},
+              "reducer": {"params": [], "type": "last"},
+              "type": "query"
+            }
+          ],
+          "executionErrorState": "alerting",
+          "noDataState": "no_data",
+          "frequency": "10s",
+          "handler": 1,
+          "name": "Under Replicated Partitions Alert",
+          "message": "Kafka has under-replicated partitions"
+        },
+        "gridPos": {"h": 8, "w": 24, "x": 0, "y": 8}
+      },
+      {
+        "id": 5,
+        "title": "JVM Heap Usage",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "kafka_server_brokertopicmetrics_messagesin_total",
+            "refId": "A",
+            "legendFormat": "{{instance}}"
+          }
+        ],
+        "yAxes": [
+          {"label": "Bytes", "show": true},
+          {"show": false}
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16}
+      },
+      {
+        "id": 6,
+        "title": "Network I/O",
+        "type": "graph",
+        "targets": [
+          {
+            "expr": "rate(kafka_network_requestmetrics_totaltimems[5m])",
+            "refId": "A",
+            "legendFormat": "Request Rate"
+          }
+        ],
+        "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16}
+      }
+    ],
+    "time": {
+      "from": "now-1h",
+      "to": "now"
+    },
+    "refresh": "30s",
+    "schemaVersion": 16,
+    "version": 1
+  }
+}

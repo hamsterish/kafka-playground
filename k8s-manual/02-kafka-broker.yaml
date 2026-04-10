@@ -1,0 +1,234 @@
+---
+# Kafka Broker StatefulSet Configuration
+# Educational Focus: Understanding distributed streaming platform architecture
+#
+# Key Learning Points:
+# 1. KAFKA_CFG_LISTENERS vs KAFKA_CFG_ADVERTISED_LISTENERS - Critical difference!
+# 2. StatefulSet for stable network identities and persistent storage
+# 3. ZooKeeper integration for cluster coordination
+# 4. JMX metrics exposure for monitoring
+# 5. Replication and partition management
+
+# Headless Service for Kafka broker discovery
+# Enables stable DNS names: kafka-0.kafka-headless, kafka-1.kafka-headless, kafka-2.kafka-headless
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-headless
+  namespace: kafka-learning
+  labels:
+    app: kafka
+spec:
+  ports:
+  - port: 9092
+    name: plaintext
+  - port: 9093
+    name: controller
+  - port: 9999
+    name: jmx
+  clusterIP: None  # Headless service for StatefulSet
+  selector:
+    app: kafka
+---
+# Regular Service for external client access
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+  namespace: kafka-learning
+  labels:
+    app: kafka
+spec:
+  ports:
+  - port: 9092
+    name: plaintext
+    targetPort: 9092
+  selector:
+    app: kafka
+  type: ClusterIP
+---
+# Kafka StatefulSet - 3 brokers for educational replication scenarios
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: kafka
+  namespace: kafka-learning
+  labels:
+    app: kafka
+spec:
+  serviceName: kafka-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+      annotations:
+        # Enable Prometheus scraping via kafka-exporter
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9999"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Anti-affinity to distribute brokers across nodes
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - kafka
+              topologyKey: kubernetes.io/hostname
+
+      containers:
+      - name: kafka
+        image: bitnami/kafka:3.9.0
+        ports:
+        - containerPort: 9092
+          name: plaintext
+        - containerPort: 9093
+          name: controller
+        - containerPort: 9999
+          name: jmx
+
+        env:
+        # CRITICAL CONCEPT: Listeners vs Advertised Listeners
+        # KAFKA_CFG_LISTENERS: What Kafka binds to internally (0.0.0.0:9092)
+        # KAFKA_CFG_ADVERTISED_LISTENERS: What clients use to connect (FQDN)
+        - name: KAFKA_CFG_LISTENERS
+          value: "PLAINTEXT://:9092,CONTROLLER://:9093"
+
+        # Advertised listeners use StatefulSet stable network identity
+        # This ensures clients can connect to the correct broker even after pod restart
+        - name: KAFKA_CFG_ADVERTISED_LISTENERS
+          value: "PLAINTEXT://$(POD_NAME).kafka-headless.kafka-learning.svc.cluster.local:9092"
+
+        # Pod name environment variable for advertised listeners
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+
+        # Broker ID derived from StatefulSet ordinal (0, 1, 2)
+        - name: KAFKA_CFG_BROKER_ID
+          value: "$(echo $POD_NAME | cut -d'-' -f2)"
+
+        # ZooKeeper connection string
+        # Points to ZooKeeper ensemble for cluster coordination
+        - name: KAFKA_CFG_ZOOKEEPER_CONNECT
+          value: "zk-0.zk-headless.kafka-learning.svc.cluster.local:2181,zk-1.zk-headless.kafka-learning.svc.cluster.local:2181,zk-2.zk-headless.kafka-learning.svc.cluster.local:2181"
+
+        # Inter-broker communication
+        - name: KAFKA_CFG_INTER_BROKER_LISTENER_NAME
+          value: "PLAINTEXT"
+
+        # Controller configuration for KRaft mode preparation
+        # (Currently using ZooKeeper, but setting up for future migration)
+        - name: KAFKA_CFG_CONTROLLER_QUORUM_VOTERS
+          value: "0@kafka-0.kafka-headless.kafka-learning.svc.cluster.local:9093,1@kafka-1.kafka-headless.kafka-learning.svc.cluster.local:9093,2@kafka-2.kafka-headless.kafka-learning.svc.cluster.local:9093"
+
+        - name: KAFKA_CFG_CONTROLLER_LISTENER_NAMES
+          value: "CONTROLLER"
+
+        # Topic configuration defaults
+        - name: KAFKA_CFG_DEFAULT_REPLICATION_FACTOR
+          value: "2"  # 2 replicas for educational fault tolerance
+        - name: KAFKA_CFG_MIN_INSYNC_REPLICAS
+          value: "1"  # Minimum 1 replica must acknowledge writes
+        - name: KAFKA_CFG_NUM_PARTITIONS
+          value: "3"  # Default 3 partitions per topic
+
+        # Performance and retention settings
+        - name: KAFKA_CFG_LOG_RETENTION_HOURS
+          value: "168"  # 7 days retention
+        - name: KAFKA_CFG_LOG_RETENTION_BYTES
+          value: "1073741824"  # 1GB per partition
+        - name: KAFKA_CFG_LOG_SEGMENT_BYTES
+          value: "536870912"  # 512MB segments
+        - name: KAFKA_CFG_LOG_CLEANUP_POLICY
+          value: "delete"
+
+        # Replication settings for educational scenarios
+        - name: KAFKA_CFG_REPLICA_LAG_TIME_MAX_MS
+          value: "10000"
+        - name: KAFKA_CFG_REPLICA_SOCKET_TIMEOUT_MS
+          value: "30000"
+
+        # Auto-create topics for ease of learning
+        - name: KAFKA_CFG_AUTO_CREATE_TOPICS_ENABLE
+          value: "true"
+
+        # JMX configuration for comprehensive monitoring
+        - name: KAFKA_JMX_ENABLED
+          value: "true"
+        - name: JMX_PORT
+          value: "9999"
+        - name: KAFKA_JMX_HOSTNAME
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+
+        # Bitnami specific settings
+        - name: ALLOW_PLAINTEXT_LISTENER
+          value: "yes"
+        - name: KAFKA_ENABLE_KRAFT
+          value: "no"  # Using ZooKeeper for now, KRaft migration later
+
+        # Data directory
+        - name: KAFKA_CFG_LOG_DIRS
+          value: "/bitnami/kafka/data"
+
+        # Resource allocation for educational workload
+        resources:
+          limits:
+            cpu: "1"
+            memory: 2Gi
+          requests:
+            cpu: 500m
+            memory: 1Gi
+
+        # Persistent storage mount
+        volumeMounts:
+        - name: datadir
+          mountPath: /bitnami/kafka
+
+        # Health checks
+        livenessProbe:
+          exec:
+            command:
+              - /bin/bash
+              - -c
+              - "kafka-broker-api-versions.sh --bootstrap-server localhost:9092"
+          initialDelaySeconds: 60
+          periodSeconds: 30
+
+        readinessProbe:
+          exec:
+            command:
+              - /bin/bash
+              - -c
+              - "kafka-broker-api-versions.sh --bootstrap-server localhost:9092"
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+      # Security context
+      securityContext:
+        fsGroup: 1001
+        runAsUser: 1001
+
+  # Persistent Volume Claim template
+  # Each Kafka broker gets its own persistent storage
+  volumeClaimTemplates:
+  - metadata:
+      name: datadir
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+      # Using default storage class for local development

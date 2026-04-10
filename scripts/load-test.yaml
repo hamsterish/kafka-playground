@@ -1,0 +1,346 @@
+---
+# Kubernetes Job for Kafka Load Testing
+# Educational Focus: Demonstrating parallel producers and load patterns
+
+# ConfigMap with Python requirements and scripts
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: load-test-scripts
+  namespace: kafka-learning
+  labels:
+    app: kafka-load-test
+data:
+  requirements.txt: |
+    kafka-python-ng==2.2.2
+    requests==2.31.0
+    prometheus-client==0.20.0
+    python-json-logger==2.0.7
+    pydantic==2.6.4
+    click==8.1.7
+
+  # Inline producer script for load testing
+  producer.py: |
+    #!/usr/bin/env python3
+    """Simplified producer for load testing in Kubernetes."""
+
+    import json
+    import logging
+    import random
+    import time
+    from datetime import datetime, timezone
+    from uuid import uuid4
+    import os
+    import sys
+
+    from kafka import KafkaProducer
+    from kafka.admin import KafkaAdminClient, NewTopic
+    from kafka.errors import TopicAlreadyExistsError
+
+    logging.basicConfig(level=logging.INFO)
+    logger = logging.getLogger(__name__)
+
+    class LoadTestProducer:
+        def __init__(self):
+            self.bootstrap_servers = os.getenv('KAFKA_BOOTSTRAP_SERVERS', 'kafka:9092')
+            self.topic = os.getenv('KAFKA_TOPIC', 'load-test-data')
+            self.rate = float(os.getenv('PRODUCER_RATE', '100'))
+            self.duration = int(os.getenv('PRODUCER_DURATION', '300'))
+            self.pod_name = os.getenv('POD_NAME', 'unknown')
+
+        def ensure_topic_exists(self):
+            """Create load test topic with high partition count for parallelism."""
+            try:
+                admin_client = KafkaAdminClient(
+                    bootstrap_servers=self.bootstrap_servers,
+                    client_id=f'load-test-admin-{self.pod_name}'
+                )
+
+                new_topic = NewTopic(
+                    name=self.topic,
+                    num_partitions=12,     # High partition count for load testing
+                    replication_factor=2,
+                    topic_configs={
+                        'retention.ms': str(60 * 60 * 1000),  # 1 hour retention for load test
+                        'compression.type': 'snappy'
+                    }
+                )
+
+                admin_client.create_topics([new_topic], validate_only=False)
+                logger.info(f"Created load test topic '{self.topic}' with 12 partitions")
+
+            except TopicAlreadyExistsError:
+                logger.info(f"Load test topic '{self.topic}' already exists")
+            except Exception as e:
+                logger.error(f"Failed to create topic: {e}")
+
+        def generate_load_message(self):
+            """Generate a message for load testing."""
+            return {
+                'id': str(uuid4()),
+                'timestamp': datetime.now(timezone.utc).isoformat(),
+                'producer_pod': self.pod_name,
+                'load_test_data': 'x' * random.randint(100, 1000),  # Variable payload size
+                'sequence': getattr(self, 'sequence', 0)
+            }
+
+        def run_load_test(self):
+            """Execute load test."""
+            self.ensure_topic_exists()
+
+            producer = KafkaProducer(
+                bootstrap_servers=self.bootstrap_servers,
+                client_id=f'load-test-producer-{self.pod_name}',
+                acks='all',
+                retries=3,
+                batch_size=65536,      # Large batch size for throughput
+                linger_ms=50,          # Higher linger for batching
+                compression_type='snappy',
+                value_serializer=lambda v: json.dumps(v).encode('utf-8')
+            )
+
+            logger.info(f"Starting load test: {self.rate} msg/sec for {self.duration} seconds")
+
+            start_time = time.time()
+            messages_sent = 0
+            sequence = 0
+
+            try:
+                while (time.time() - start_time) < self.duration:
+                    # Send burst of messages
+                    burst_size = int(self.rate)
+                    for _ in range(burst_size):
+                        message = self.generate_load_message()
+                        message['sequence'] = sequence
+                        sequence += 1
+
+                        producer.send(
+                            self.topic,
+                            key=f"load-test-{random.randint(1, 100)}".encode('utf-8'),
+                            value=message
+                        )
+                        messages_sent += 1
+
+                    # Sleep for 1 second to maintain rate
+                    time.sleep(1)
+
+                    if messages_sent % 1000 == 0:
+                        elapsed = time.time() - start_time
+                        rate = messages_sent / elapsed
+                        logger.info(f"Sent {messages_sent} messages in {elapsed:.1f}s ({rate:.1f} msg/sec)")
+
+            except KeyboardInterrupt:
+                logger.info("Load test interrupted")
+            finally:
+                producer.flush(timeout=30)
+                producer.close()
+                elapsed = time.time() - start_time
+                final_rate = messages_sent / elapsed if elapsed > 0 else 0
+                logger.info(f"Load test complete: {messages_sent} messages in {elapsed:.1f}s ({final_rate:.1f} msg/sec)")
+
+    if __name__ == '__main__':
+        producer = LoadTestProducer()
+        producer.run_load_test()
+
+---
+# Kubernetes Job for parallel load testing
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-load-test
+  namespace: kafka-learning
+  labels:
+    app: kafka-load-test
+spec:
+  # Run 5 parallel producer pods
+  parallelism: 5
+  completions: 5
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: kafka-load-test
+    spec:
+      restartPolicy: Never
+      initContainers:
+      # Install Python dependencies
+      - name: install-deps
+        image: python:3.11-slim
+        command: ['sh', '-c']
+        args:
+          - |
+            pip install --no-cache-dir -r /scripts/requirements.txt
+            cp -r /usr/local/lib/python3.11/site-packages/* /shared-deps/
+        volumeMounts:
+        - name: scripts-volume
+          mountPath: /scripts
+        - name: shared-deps
+          mountPath: /shared-deps
+
+      containers:
+      - name: load-test-producer
+        image: python:3.11-slim
+        command: ['python', '/scripts/producer.py']
+        env:
+        # Kafka connection
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          value: "kafka:9092"
+        - name: KAFKA_TOPIC
+          value: "load-test-data"
+
+        # Load test parameters
+        - name: PRODUCER_RATE
+          value: "200"          # 200 messages per second per pod
+        - name: PRODUCER_DURATION
+          value: "300"          # 5 minutes
+
+        # Pod identification
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+
+        # Python path with installed dependencies
+        - name: PYTHONPATH
+          value: "/shared-deps"
+
+        volumeMounts:
+        - name: scripts-volume
+          mountPath: /scripts
+        - name: shared-deps
+          mountPath: /shared-deps
+
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+
+      volumes:
+      - name: scripts-volume
+        configMap:
+          name: load-test-scripts
+          defaultMode: 0755
+      - name: shared-deps
+        emptyDir: {}
+
+---
+# Service for load test monitoring (optional)
+apiVersion: v1
+kind: Service
+metadata:
+  name: load-test-monitor
+  namespace: kafka-learning
+  labels:
+    app: kafka-load-test
+spec:
+  selector:
+    app: kafka-load-test
+  ports:
+  - port: 8080
+    name: http
+  type: ClusterIP
+
+---
+# Simple consumer job to validate load test data
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: kafka-load-test-consumer
+  namespace: kafka-learning
+  labels:
+    app: kafka-load-test-consumer
+spec:
+  parallelism: 2  # 2 consumer instances
+  completions: 2
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: kafka-load-test-consumer
+    spec:
+      restartPolicy: Never
+      initContainers:
+      # Install Python dependencies
+      - name: install-deps
+        image: python:3.11-slim
+        command: ['sh', '-c']
+        args:
+          - |
+            pip install --no-cache-dir kafka-python-ng==2.2.2
+            cp -r /usr/local/lib/python3.11/site-packages/* /shared-deps/
+        volumeMounts:
+        - name: shared-deps
+          mountPath: /shared-deps
+
+      containers:
+      - name: load-test-consumer
+        image: python:3.11-slim
+        command: ['python', '-c']
+        args:
+          - |
+            import json
+            import logging
+            import time
+            from kafka import KafkaConsumer
+
+            logging.basicConfig(level=logging.INFO)
+            logger = logging.getLogger(__name__)
+
+            consumer = KafkaConsumer(
+                'load-test-data',
+                bootstrap_servers='kafka:9092',
+                group_id='load-test-consumer-group',
+                auto_offset_reset='earliest',
+                value_deserializer=lambda m: json.loads(m.decode('utf-8'))
+            )
+
+            logger.info("Starting load test consumer...")
+            message_count = 0
+            start_time = time.time()
+            last_log_time = start_time
+
+            try:
+                for message in consumer:
+                    message_count += 1
+
+                    current_time = time.time()
+                    if current_time - last_log_time >= 10:  # Log every 10 seconds
+                        elapsed = current_time - start_time
+                        rate = message_count / elapsed if elapsed > 0 else 0
+                        logger.info(f"Consumed {message_count} messages ({rate:.1f} msg/sec)")
+                        last_log_time = current_time
+
+                        # Stop after processing for 6 minutes
+                        if elapsed > 360:
+                            break
+
+            except KeyboardInterrupt:
+                pass
+            finally:
+                consumer.close()
+                elapsed = time.time() - start_time
+                final_rate = message_count / elapsed if elapsed > 0 else 0
+                logger.info(f"Load test consumer complete: {message_count} messages in {elapsed:.1f}s ({final_rate:.1f} msg/sec)")
+
+        env:
+        - name: PYTHONPATH
+          value: "/shared-deps"
+
+        volumeMounts:
+        - name: shared-deps
+          mountPath: /shared-deps
+
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 300m
+            memory: 512Mi
+
+      volumes:
+      - name: shared-deps
+        emptyDir: {}

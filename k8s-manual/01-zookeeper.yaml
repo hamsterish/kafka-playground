@@ -1,0 +1,195 @@
+---
+# ZooKeeper StatefulSet Configuration
+# Educational Focus: Understanding distributed coordination in Kafka
+#
+# ZooKeeper serves as the distributed coordination service for Kafka, handling:
+# - Cluster metadata storage (topics, partitions, replicas)
+# - Leader election for topic partitions
+# - Broker registration and health monitoring
+# - Configuration management and ACL storage
+
+# Service for ZooKeeper client connections
+# IMPORTANT: ClusterIP service for internal communication
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper
+  namespace: kafka-learning
+  labels:
+    app: zookeeper
+    service: zookeeper
+spec:
+  ports:
+  - port: 2181
+    name: client
+    targetPort: 2181
+  - port: 2888
+    name: server
+    targetPort: 2888
+  - port: 3888
+    name: leader-election
+    targetPort: 3888
+  clusterIP: None  # Headless service for StatefulSet
+  selector:
+    app: zookeeper
+---
+# Headless Service for ZooKeeper ensemble discovery
+# Enables stable network identities: zk-0.zk-headless, zk-1.zk-headless, zk-2.zk-headless
+apiVersion: v1
+kind: Service
+metadata:
+  name: zk-headless
+  namespace: kafka-learning
+  labels:
+    app: zookeeper
+spec:
+  ports:
+  - port: 2181
+    name: client
+  - port: 2888
+    name: server
+  - port: 3888
+    name: leader-election
+  clusterIP: None
+  selector:
+    app: zookeeper
+---
+# ZooKeeper StatefulSet - 3-node ensemble
+# StatefulSet provides:
+# 1. Stable network identities (zk-0, zk-1, zk-2)
+# 2. Ordered deployment and scaling
+# 3. Persistent storage per replica
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: zk
+  namespace: kafka-learning
+  labels:
+    app: zookeeper
+spec:
+  serviceName: zk-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: zookeeper
+  template:
+    metadata:
+      labels:
+        app: zookeeper
+      annotations:
+        # Enable Prometheus scraping for ZooKeeper JMX metrics
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "7000"
+        prometheus.io/path: "/metrics"
+    spec:
+      # Anti-affinity to spread ZooKeeper nodes across different nodes
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - zookeeper
+              topologyKey: kubernetes.io/hostname
+
+      containers:
+      - name: zookeeper
+        image: confluentinc/cp-zookeeper:7.5.0
+        ports:
+        - containerPort: 2181
+          name: client
+        - containerPort: 2888
+          name: server
+        - containerPort: 3888
+          name: leader-election
+        - containerPort: 7000
+          name: jmx
+
+        env:
+        # ZooKeeper Server ID - Must be unique for each replica
+        # Uses StatefulSet ordinal index (0, 1, 2)
+        - name: ZOOKEEPER_SERVER_ID
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+
+        # ZooKeeper client port
+        - name: ZOOKEEPER_CLIENT_PORT
+          value: "2181"
+
+        # ZooKeeper ensemble configuration
+        # Uses headless service DNS for discovery
+        - name: ZOOKEEPER_SERVERS
+          value: "zk-0.zk-headless.kafka-learning.svc.cluster.local:2888:3888;zk-1.zk-headless.kafka-learning.svc.cluster.local:2888:3888;zk-2.zk-headless.kafka-learning.svc.cluster.local:2888:3888"
+
+        # Performance and reliability settings
+        - name: ZOOKEEPER_TICK_TIME
+          value: "2000"
+        - name: ZOOKEEPER_INIT_LIMIT
+          value: "10"
+        - name: ZOOKEEPER_SYNC_LIMIT
+          value: "5"
+
+        # JMX configuration for monitoring
+        - name: KAFKA_JMX_ENABLED
+          value: "true"
+        - name: KAFKA_JMX_PORT
+          value: "7000"
+        - name: KAFKA_JMX_HOSTNAME
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+
+        # Data and log directories
+        - name: ZOOKEEPER_DATA_DIR
+          value: /var/lib/zookeeper/data
+        - name: ZOOKEEPER_DATA_LOG_DIR
+          value: /var/lib/zookeeper/log
+
+        # Resource limits for educational workload
+        resources:
+          limits:
+            cpu: 500m
+            memory: 1Gi
+          requests:
+            cpu: 250m
+            memory: 512Mi
+
+        # Persistent storage mount
+        volumeMounts:
+        - name: datadir
+          mountPath: /var/lib/zookeeper
+
+        # Health checks
+        livenessProbe:
+          exec:
+            command: ["/bin/bash", "-c", "echo 'ruok' | nc localhost 2181 | grep imok"]
+          initialDelaySeconds: 30
+          periodSeconds: 30
+
+        readinessProbe:
+          exec:
+            command: ["/bin/bash", "-c", "echo 'ruok' | nc localhost 2181 | grep imok"]
+          initialDelaySeconds: 5
+          periodSeconds: 10
+
+      # Security context
+      securityContext:
+        fsGroup: 1000
+        runAsUser: 1000
+
+  # Persistent Volume Claim template
+  # Each ZooKeeper replica gets its own 10Gi persistent volume
+  volumeClaimTemplates:
+  - metadata:
+      name: datadir
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 10Gi
+      # Using default storage class for local development

@@ -1,0 +1,11 @@
+---
+# Dedicated namespace for monitoring infrastructure
+# Isolates observability components from Kafka workloads
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kafka-monitoring
+  labels:
+    name: kafka-monitoring
+    purpose: observability
+    project: kafka-playground

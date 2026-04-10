@@ -1,0 +1,139 @@
+---
+# Kafka Exporter - JMX to Prometheus Metrics Bridge
+# Educational Focus: Understanding Kafka metrics and monitoring
+#
+# The kafka-exporter scrapes JMX metrics from Kafka brokers and
+# exposes them in Prometheus format for monitoring and alerting.
+#
+# Key Metrics Exposed:
+# - kafka_brokers: Number of active brokers
+# - kafka_topic_partitions: Partitions per topic
+# - kafka_topic_partition_current_offset: Current offset per partition
+# - kafka_topic_partition_under_replicated_partition: URP count (critical alert)
+# - kafka_consumer_lag: Consumer group lag metrics
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka-exporter
+  namespace: kafka-learning
+  labels:
+    app: kafka-exporter
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka-exporter
+  template:
+    metadata:
+      labels:
+        app: kafka-exporter
+      annotations:
+        # Self-monitoring: kafka-exporter exposes its own metrics
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9308"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+      - name: kafka-exporter
+        image: danielqsj/kafka-exporter:v1.7.0
+        args:
+          # Kafka broker endpoints for metrics scraping
+          - --kafka.server=kafka-0.kafka-headless.kafka-learning.svc.cluster.local:9092
+          - --kafka.server=kafka-1.kafka-headless.kafka-learning.svc.cluster.local:9092
+          - --kafka.server=kafka-2.kafka-headless.kafka-learning.svc.cluster.local:9092
+          # Metrics endpoint configuration
+          - --web.listen-address=:9308
+          - --web.telemetry-path=/metrics
+          # Enable topic and consumer group metrics
+          - --topic.filter=.*
+          - --group.filter=.*
+          # Logging configuration for debugging
+          - --log.level=info
+          # Connection timeout settings
+          - --kafka.timeout=30s
+          # Enable offset monitoring for all partitions
+          - --use-consumelag-zookeeper
+
+        ports:
+        - containerPort: 9308
+          name: metrics
+          protocol: TCP
+
+        env:
+        # Optional: Custom labels for metrics
+        - name: KAFKA_CLUSTER_NAME
+          value: "kafka-playground"
+
+        resources:
+          limits:
+            cpu: 200m
+            memory: 256Mi
+          requests:
+            cpu: 100m
+            memory: 128Mi
+
+        # Health checks
+        livenessProbe:
+          httpGet:
+            path: /metrics
+            port: 9308
+          initialDelaySeconds: 30
+          periodSeconds: 30
+
+        readinessProbe:
+          httpGet:
+            path: /metrics
+            port: 9308
+          initialDelaySeconds: 10
+          periodSeconds: 10
+
+      # Restart policy for reliability
+      restartPolicy: Always
+
+---
+# Service to expose kafka-exporter metrics
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka-exporter
+  namespace: kafka-learning
+  labels:
+    app: kafka-exporter
+spec:
+  selector:
+    app: kafka-exporter
+  ports:
+  - port: 9308
+    targetPort: 9308
+    protocol: TCP
+    name: metrics
+  type: ClusterIP
+
+---
+# ServiceMonitor for automated Prometheus discovery (if using Prometheus Operator)
+# This is optional but shows best practices for monitoring
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-exporter-servicemonitor
+  namespace: kafka-learning
+  labels:
+    app: kafka-exporter
+data:
+  servicemonitor.yaml: |
+    # ServiceMonitor for Prometheus Operator (reference)
+    apiVersion: monitoring.coreos.com/v1
+    kind: ServiceMonitor
+    metadata:
+      name: kafka-exporter
+      namespace: kafka-learning
+    spec:
+      selector:
+        matchLabels:
+          app: kafka-exporter
+      endpoints:
+      - port: metrics
+        path: /metrics
+        interval: 30s
+        scrapeTimeout: 10s

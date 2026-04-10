@@ -1,0 +1,101 @@
+---
+# VictoriaMetrics - High-performance time-series database
+# Single-node deployment suitable for educational use
+# Provides Prometheus-compatible storage for Kafka metrics
+
+# Persistent storage for metrics data
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: victoriametrics-data
+  namespace: kafka-monitoring
+  labels:
+    app: victoriametrics
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  # Using default storage class for local development
+---
+# VictoriaMetrics deployment with persistent storage
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: victoriametrics
+  namespace: kafka-monitoring
+  labels:
+    app: victoriametrics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: victoriametrics
+  template:
+    metadata:
+      labels:
+        app: victoriametrics
+    spec:
+      containers:
+      - name: victoriametrics
+        image: victoriametrics/victoria-metrics:v1.97.1
+        args:
+          # Storage path for metrics data
+          - -storageDataPath=/storage
+          # Retention policy - 7 days for educational use
+          - -retentionPeriod=7d
+          # HTTP listen address
+          - -httpListenAddr=:8428
+          # Enable search API for Grafana integration
+          - -search.maxQueryDuration=60s
+          # Memory optimization for educational workloads
+          - -memory.allowedPercent=80
+        ports:
+        - containerPort: 8428
+          name: http
+          protocol: TCP
+        volumeMounts:
+        - name: storage
+          mountPath: /storage
+        resources:
+          limits:
+            cpu: "1"
+            memory: 2Gi
+          requests:
+            cpu: 500m
+            memory: 1Gi
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8428
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8428
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: storage
+        persistentVolumeClaim:
+          claimName: victoriametrics-data
+---
+# Service to expose VictoriaMetrics
+apiVersion: v1
+kind: Service
+metadata:
+  name: victoriametrics
+  namespace: kafka-monitoring
+  labels:
+    app: victoriametrics
+spec:
+  selector:
+    app: victoriametrics
+  ports:
+  - port: 8428
+    targetPort: 8428
+    protocol: TCP
+    name: http
+  type: ClusterIP

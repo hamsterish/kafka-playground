@@ -1,0 +1,11 @@
+---
+# Dedicated namespace for Kafka learning environment
+# Isolates Kafka workloads from other applications
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kafka-learning
+  labels:
+    name: kafka-learning
+    purpose: kafka-playground
+    project: kafka-playground

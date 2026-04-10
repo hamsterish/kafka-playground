@@ -1,0 +1,285 @@
+---
+# Strimzi KafkaTopic CRD - Declarative Topic Management
+# Educational Focus: Compare with manual kafka-topics.sh commands
+
+# This CRD replaces manual topic creation commands like:
+# kafka-topics.sh --bootstrap-server localhost:9092 --create --topic learning-data --partitions 6 --replication-factor 2
+
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: learning-data-strimzi
+  namespace: strimzi-kafka
+  labels:
+    strimzi.io/cluster: kafka-playground-cluster
+    app: kafka-playground
+    usage: data-simulation
+  annotations:
+    strimzi.io/educational-note: "Compare with manual topic creation in scripts/producer.py"
+spec:
+  # Topic name in Kafka (can differ from metadata.name)
+  topicName: learning-data-strimzi
+
+  # Partition configuration (same as producer.py auto-creation)
+  partitions: 6
+
+  # Replication factor (same as manual setup)
+  replicas: 2
+
+  # Topic configuration - declarative vs kafka-configs.sh commands
+  config:
+    # Retention configuration (same as manual)
+    retention.ms: "604800000"      # 7 days in milliseconds
+    segment.ms: "86400000"         # 1 day segments
+
+    # Cleanup policy
+    cleanup.policy: "delete"
+
+    # Compression settings (optimized for learning workload)
+    compression.type: "producer"
+
+    # Message size limits
+    max.message.bytes: "1048576"   # 1MB max message size
+
+    # Replication settings
+    min.insync.replicas: "1"
+
+    # Flush settings for durability vs performance trade-off
+    flush.messages: "10000"        # Flush every 10K messages
+    flush.ms: "60000"             # Flush every minute
+
+---
+# Additional topic for load testing with different characteristics
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: strimzi-load-test
+  namespace: strimzi-kafka
+  labels:
+    strimzi.io/cluster: kafka-playground-cluster
+    app: kafka-playground
+    usage: load-testing
+spec:
+  topicName: strimzi-load-test
+
+  # Higher partition count for load testing parallelism
+  partitions: 12
+
+  # Replication factor
+  replicas: 2
+
+  # Optimized configuration for high-throughput scenarios
+  config:
+    # Shorter retention for load test data
+    retention.ms: "3600000"        # 1 hour retention
+
+    # Larger segments for better throughput
+    segment.ms: "3600000"          # 1 hour segments
+
+    # Cleanup policy
+    cleanup.policy: "delete"
+
+    # Compression for better throughput
+    compression.type: "snappy"
+
+    # Larger message size limit
+    max.message.bytes: "5242880"   # 5MB max message size
+
+    # Optimized for throughput over durability in load test
+    min.insync.replicas: "1"
+
+    # Reduced flush frequency for better performance
+    flush.messages: "50000"        # Flush every 50K messages
+    flush.ms: "300000"            # Flush every 5 minutes
+
+---
+# Topic for aggregated results (smaller, more durable)
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: temperature-aggregates
+  namespace: strimzi-kafka
+  labels:
+    strimzi.io/cluster: kafka-playground-cluster
+    app: kafka-playground
+    usage: aggregated-results
+spec:
+  topicName: temperature-aggregates
+
+  # Fewer partitions for aggregated data
+  partitions: 3
+
+  # Higher replication for important aggregated data
+  replicas: 2
+
+  # Configuration optimized for aggregated results
+  config:
+    # Longer retention for aggregated data
+    retention.ms: "2592000000"     # 30 days
+
+    # Smaller segments due to lower volume
+    segment.ms: "86400000"         # 1 day segments
+
+    # Cleanup policy
+    cleanup.policy: "delete"
+
+    # Compression for storage efficiency
+    compression.type: "lz4"
+
+    # Smaller messages expected
+    max.message.bytes: "262144"    # 256KB max message size
+
+    # Higher durability for aggregated results
+    min.insync.replicas: "2"
+
+    # More frequent flushes for durability
+    flush.messages: "1000"         # Flush every 1K messages
+    flush.ms: "30000"             # Flush every 30 seconds
+
+---
+# Dead Letter Topic for error handling patterns
+apiVersion: kafka.strimzi.io/v1beta2
+kind: KafkaTopic
+metadata:
+  name: dead-letter-topic
+  namespace: strimzi-kafka
+  labels:
+    strimzi.io/cluster: kafka-playground-cluster
+    app: kafka-playground
+    usage: error-handling
+spec:
+  topicName: dead-letter-topic
+
+  # Single partition for error messages (order preserved)
+  partitions: 1
+
+  # High replication for error data
+  replicas: 2
+
+  # Configuration for error message storage
+  config:
+    # Long retention for debugging
+    retention.ms: "7776000000"     # 90 days
+
+    # Small segments due to expected low volume
+    segment.ms: "604800000"        # 7 days
+
+    # Never delete error messages automatically
+    cleanup.policy: "delete"
+
+    # No compression for error data (for easier inspection)
+    compression.type: "uncompressed"
+
+    # Reasonable message size for error payloads
+    max.message.bytes: "1048576"   # 1MB
+
+    # Ensure all replicas get error messages
+    min.insync.replicas: "2"
+
+    # Immediate flush for error messages
+    flush.messages: "1"
+    flush.ms: "1000"              # 1 second
+
+---
+# ConfigMap with educational comparison notes
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: strimzi-topic-comparison
+  namespace: strimzi-kafka
+  labels:
+    app: kafka-playground
+    component: documentation
+data:
+  comparison.md: |
+    # Topic Management: Manual vs Strimzi
+
+    ## Manual Approach (k8s-manual/)
+    ```bash
+    # Topic creation in producer.py
+    new_topic = NewTopic(
+        name=self.topic,
+        num_partitions=6,
+        replication_factor=2,
+        topic_configs={
+            'cleanup.policy': 'delete',
+            'retention.ms': str(7 * 24 * 60 * 60 * 1000),
+            'compression.type': 'producer'
+        }
+    )
+    admin_client.create_topics([new_topic])
+    ```
+
+    ## Strimzi Approach
+    ```yaml
+    apiVersion: kafka.strimzi.io/v1beta2
+    kind: KafkaTopic
+    metadata:
+      name: learning-data-strimzi
+    spec:
+      partitions: 6
+      replicas: 2
+      config:
+        cleanup.policy: "delete"
+        retention.ms: "604800000"
+        compression.type: "producer"
+    ```
+
+    ## Key Differences
+
+    ### Manual Approach
+    - Topics created programmatically in application code
+    - Configuration scattered across Python code
+    - No declarative state management
+    - Manual error handling required
+    - Difficult to track topic lifecycle
+
+    ### Strimzi Approach
+    - Declarative YAML configuration
+    - GitOps compatible (version controlled)
+    - Automatic reconciliation
+    - Built-in validation
+    - Clear separation of concerns
+
+    ## Educational Benefits of Strimzi
+
+    1. **Declarative Management**: Topics are defined as desired state
+    2. **Validation**: Schema validation prevents configuration errors
+    3. **Reconciliation**: Automatic drift detection and correction
+    4. **Observability**: Built-in status reporting and events
+    5. **GitOps Ready**: Configuration can be version controlled
+
+  operational-benefits.md: |
+    # Operational Benefits of Strimzi
+
+    ## Automatic Operations
+    - Rolling updates without downtime
+    - Configuration drift detection
+    - Health monitoring and alerting
+    - Automatic failover handling
+
+    ## Best Practices Built-in
+    - Optimized JVM settings
+    - Security configurations
+    - Monitoring integration
+    - Resource management
+
+    ## Day-2 Operations
+    - Scaling clusters up/down
+    - Version upgrades
+    - Configuration changes
+    - Backup and recovery
+
+    ## Comparison Commands
+
+    ### Check topic status (Manual)
+    ```bash
+    kubectl exec kafka-0 -n kafka-learning -- kafka-topics.sh \
+      --bootstrap-server localhost:9092 --describe --topic learning-data
+    ```
+
+    ### Check topic status (Strimzi)
+    ```bash
+    kubectl get kafkatopic -n strimzi-kafka
+    kubectl describe kafkatopic learning-data-strimzi -n strimzi-kafka
+    ```
