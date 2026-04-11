@@ -109,6 +109,16 @@ spec:
       containers:
       - name: zookeeper
         image: docker.io/bitnamilegacy/zookeeper:3.9.0
+        # Override command to set ZOO_SERVER_ID from hostname
+        command:
+        - /bin/bash
+        - -c
+        - |
+          # Calculate server ID from hostname (zk-0->1, zk-1->2, zk-2->3)
+          export ZOO_SERVER_ID=$((${HOSTNAME##*-} + 1))
+          echo "Starting ZooKeeper with SERVER_ID=$ZOO_SERVER_ID for pod $HOSTNAME"
+          # Start ZooKeeper with calculated server ID
+          exec /opt/bitnami/scripts/zookeeper/entrypoint.sh /opt/bitnami/scripts/zookeeper/run.sh
         ports:
         - containerPort: 2181
           name: client
@@ -123,6 +133,7 @@ spec:
 
         env:
         # Bitnami ZooKeeper configuration following official documentation
+        # ZOO_SERVER_ID is calculated dynamically in the command override above
 
         # Server list for ensemble (comma-separated format)
         - name: ZOO_SERVERS
