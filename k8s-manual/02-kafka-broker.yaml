@@ -66,10 +66,8 @@ spec:
       labels:
         app: kafka
       annotations:
-        # Enable Prometheus scraping via kafka-exporter
-        prometheus.io/scrape: "true"
-        prometheus.io/port: "9999"
-        prometheus.io/path: "/metrics"
+        # JMX disabled temporarily - will use kafka-exporter for metrics
+        prometheus.io/scrape: "false"
     spec:
       # Anti-affinity to distribute brokers across nodes
       affinity:
@@ -157,9 +155,9 @@ spec:
         - name: JMX_PORT
           value: "9999"
         - name: KAFKA_JMX_HOSTNAME
-          valueFrom:
-            fieldRef:
-              fieldPath: status.podIP
+          value: "0.0.0.0"
+        - name: KAFKA_JMX_OPTS
+          value: "-Dcom.sun.management.jmxremote=true -Dcom.sun.management.jmxremote.authenticate=false -Dcom.sun.management.jmxremote.ssl=false -Dcom.sun.management.jmxremote.local.only=false -Dcom.sun.management.jmxremote.port=9999 -Dcom.sun.management.jmxremote.rmi.port=9999 -Djava.rmi.server.hostname=127.0.0.1"
 
         # Bitnami specific settings
         - name: ALLOW_PLAINTEXT_LISTENER
@@ -187,22 +185,21 @@ spec:
 
         # Health checks
         livenessProbe:
-          exec:
-            command:
-              - /bin/bash
-              - -c
-              - "kafka-broker-api-versions.sh --bootstrap-server localhost:9092"
+          tcpSocket:
+            port: 9092
           initialDelaySeconds: 60
           periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 5
 
         readinessProbe:
-          exec:
-            command:
-              - /bin/bash
-              - -c
-              - "kafka-broker-api-versions.sh --bootstrap-server localhost:9092"
-          initialDelaySeconds: 30
+          tcpSocket:
+            port: 9092
+          initialDelaySeconds: 10
           periodSeconds: 10
+          timeoutSeconds: 5
+          successThreshold: 1
+          failureThreshold: 3
 
       # Security context
       securityContext:

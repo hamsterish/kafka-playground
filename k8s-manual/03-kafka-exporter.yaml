@@ -38,8 +38,10 @@ spec:
       - name: kafka-exporter
         image: danielqsj/kafka-exporter:v1.9.0
         args:
-          # Kafka broker endpoints - comma-separated for multiple brokers
-          - --kafka.server=kafka-0.kafka-headless.kafka-learning.svc.cluster.local:9092,kafka-1.kafka-headless.kafka-learning.svc.cluster.local:9092,kafka-2.kafka-headless.kafka-learning.svc.cluster.local:9092
+          # Kafka broker endpoints - multiple separate flags
+          - --kafka.server=kafka-0.kafka-headless.kafka-learning.svc.cluster.local:9092
+          - --kafka.server=kafka-1.kafka-headless.kafka-learning.svc.cluster.local:9092
+          - --kafka.server=kafka-2.kafka-headless.kafka-learning.svc.cluster.local:9092
           # Metrics endpoint configuration
           - --web.listen-address=:9308
           - --web.telemetry-path=/metrics
