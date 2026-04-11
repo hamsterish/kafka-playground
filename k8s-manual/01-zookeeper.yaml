@@ -29,6 +29,12 @@ spec:
   - port: 3888
     name: leader-election
     targetPort: 3888
+  - port: 7000
+    name: prometheus
+    targetPort: 7000
+  - port: 8080
+    name: admin
+    targetPort: 8080
   clusterIP: None  # Headless service for StatefulSet
   selector:
     app: zookeeper
@@ -50,6 +56,10 @@ spec:
     name: server
   - port: 3888
     name: leader-election
+  - port: 7000
+    name: prometheus
+  - port: 8080
+    name: admin
   clusterIP: None
   selector:
     app: zookeeper
@@ -98,7 +108,7 @@ spec:
 
       containers:
       - name: zookeeper
-        image: confluentinc/cp-zookeeper:7.5.0
+        image: docker.io/bitnamilegacy/zookeeper:3.9.0
         ports:
         - containerPort: 2181
           name: client
@@ -107,48 +117,57 @@ spec:
         - containerPort: 3888
           name: leader-election
         - containerPort: 7000
-          name: jmx
+          name: prometheus
+        - containerPort: 8080
+          name: admin
 
         env:
-        # ZooKeeper Server ID - Must be unique for each replica
-        # Uses StatefulSet ordinal index (0, 1, 2)
-        - name: ZOOKEEPER_SERVER_ID
-          valueFrom:
-            fieldRef:
-              fieldPath: metadata.name
+        # Bitnami ZooKeeper configuration following official documentation
 
-        # ZooKeeper client port
-        - name: ZOOKEEPER_CLIENT_PORT
+        # Server list for ensemble (comma-separated format)
+        - name: ZOO_SERVERS
+          value: "zk-0.zk-headless.kafka-learning.svc.cluster.local:2888:3888,zk-1.zk-headless.kafka-learning.svc.cluster.local:2888:3888,zk-2.zk-headless.kafka-learning.svc.cluster.local:2888:3888"
+
+        # Client port (default: 2181)
+        - name: ZOO_PORT_NUMBER
           value: "2181"
 
-        # ZooKeeper ensemble configuration
-        # Uses headless service DNS for discovery
-        - name: ZOOKEEPER_SERVERS
-          value: "zk-0.zk-headless.kafka-learning.svc.cluster.local:2888:3888;zk-1.zk-headless.kafka-learning.svc.cluster.local:2888:3888;zk-2.zk-headless.kafka-learning.svc.cluster.local:2888:3888"
-
-        # Performance and reliability settings
-        - name: ZOOKEEPER_TICK_TIME
+        # Performance settings (using Bitnami defaults)
+        - name: ZOO_TICK_TIME
           value: "2000"
-        - name: ZOOKEEPER_INIT_LIMIT
+        - name: ZOO_INIT_LIMIT
           value: "10"
-        - name: ZOOKEEPER_SYNC_LIMIT
+        - name: ZOO_SYNC_LIMIT
           value: "5"
 
-        # JMX configuration for monitoring
-        - name: KAFKA_JMX_ENABLED
-          value: "true"
-        - name: KAFKA_JMX_PORT
+        # Enable Prometheus metrics for monitoring
+        - name: ZOO_ENABLE_PROMETHEUS_METRICS
+          value: "yes"
+        - name: ZOO_PROMETHEUS_METRICS_PORT_NUMBER
           value: "7000"
-        - name: KAFKA_JMX_HOSTNAME
-          valueFrom:
-            fieldRef:
-              fieldPath: status.podIP
 
-        # Data and log directories
-        - name: ZOOKEEPER_DATA_DIR
-          value: /var/lib/zookeeper/data
-        - name: ZOOKEEPER_DATA_LOG_DIR
-          value: /var/lib/zookeeper/log
+        # Admin server (enabled by default)
+        - name: ZOO_ENABLE_ADMIN_SERVER
+          value: "yes"
+        - name: ZOO_ADMIN_SERVER_PORT_NUMBER
+          value: "8080"
+
+        # Log level for educational environment
+        - name: ZOO_LOG_LEVEL
+          value: "INFO"
+
+        # 4LW commands whitelist for health checks
+        - name: ZOO_4LW_COMMANDS_WHITELIST
+          value: "srvr,mntr,ruok,stat"
+
+        # JVM heap size (educational workload)
+        - name: ZOO_HEAP_SIZE
+          value: "512"
+
+        # Allow anonymous login for educational environment
+        # This is required by Bitnami containers when auth is not configured
+        - name: ALLOW_ANONYMOUS_LOGIN
+          value: "yes"
 
         # Resource limits for educational workload
         resources:
@@ -162,9 +181,9 @@ spec:
         # Persistent storage mount
         volumeMounts:
         - name: datadir
-          mountPath: /var/lib/zookeeper
+          mountPath: /bitnami/zookeeper
 
-        # Health checks
+        # Health checks using whitelisted 4LW commands
         livenessProbe:
           exec:
             command: ["/bin/bash", "-c", "echo 'ruok' | nc localhost 2181 | grep imok"]
@@ -172,15 +191,16 @@ spec:
           periodSeconds: 30
 
         readinessProbe:
-          exec:
-            command: ["/bin/bash", "-c", "echo 'ruok' | nc localhost 2181 | grep imok"]
-          initialDelaySeconds: 5
+          tcpSocket:
+            port: 2181
+          initialDelaySeconds: 10
           periodSeconds: 10
 
-      # Security context
+      # Security context for Bitnami containers (UID/GID 1001)
       securityContext:
-        fsGroup: 1000
-        runAsUser: 1000
+        fsGroup: 1001
+        runAsUser: 1001
+        runAsNonRoot: true
 
   # Persistent Volume Claim template
   # Each ZooKeeper replica gets its own 10Gi persistent volume
