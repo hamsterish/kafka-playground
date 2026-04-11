@@ -36,24 +36,20 @@ spec:
     spec:
       containers:
       - name: kafka-exporter
-        image: danielqsj/kafka-exporter:v1.7.0
+        image: danielqsj/kafka-exporter:v1.9.0
         args:
-          # Kafka broker endpoints for metrics scraping
-          - --kafka.server=kafka-0.kafka-headless.kafka-learning.svc.cluster.local:9092
-          - --kafka.server=kafka-1.kafka-headless.kafka-learning.svc.cluster.local:9092
-          - --kafka.server=kafka-2.kafka-headless.kafka-learning.svc.cluster.local:9092
+          # Kafka broker endpoints - comma-separated for multiple brokers
+          - --kafka.server=kafka-0.kafka-headless.kafka-learning.svc.cluster.local:9092,kafka-1.kafka-headless.kafka-learning.svc.cluster.local:9092,kafka-2.kafka-headless.kafka-learning.svc.cluster.local:9092
           # Metrics endpoint configuration
           - --web.listen-address=:9308
           - --web.telemetry-path=/metrics
-          # Enable topic and consumer group metrics
+          # Topic and consumer group filters
           - --topic.filter=.*
           - --group.filter=.*
-          # Logging configuration for debugging
-          - --log.level=info
-          # Connection timeout settings
-          - --kafka.timeout=30s
-          # Enable offset monitoring for all partitions
-          - --use-consumelag-zookeeper
+          # Logging verbosity (0=info, higher=more verbose)
+          - --verbosity=0
+          # Show all consumer group offsets
+          - --offset.show-all
 
         ports:
         - containerPort: 9308

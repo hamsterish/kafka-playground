@@ -82,7 +82,9 @@ This project emphasizes deep understanding over quick deployment:
 
 1. Clone this repository
 2. Ensure you have a running Kubernetes cluster
-3. Start with Phase 1: `kubectl apply -f monitoring/` then `kubectl apply -f k8s-manual/`
+3. Start with Phase 1: `cd monitoring & ./install-monitoring.sh` 
+4. Start proxies for Grafana and VictoriaMetrics: `kubectl port-forward svc/vmagent 8429:8429` and `kubectl port-forward svc/grafana 3000:3000`
+5. Then get into the root project directory: `cd ..` and `kubectl apply -f k8s-manual/` which creates your zookeeper and kafka cluster. 
 4. Access Grafana at `http://localhost:3000` (after port-forwarding)
 5. Progress through each phase systematically
 
